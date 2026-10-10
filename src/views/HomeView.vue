@@ -165,9 +165,17 @@ const steps = [
               <AppIcon name="feather" :size="18" />
               <span>开始创作</span>
             </button>
-            <button class="lq-btn lq-btn--ghost lq-btn--lg" @click="continueEdit">
+            <button class="lq-btn lq-btn--ghost lq-btn--lg" @click="playTemplate('midnight')">
+              <AppIcon name="play" :size="18" />
+              <span>试玩示范故事</span>
+            </button>
+            <button
+              v-if="list.length"
+              class="lq-btn lq-btn--ghost lq-btn--lg"
+              @click="continueEdit"
+            >
               <AppIcon name="bookOpen" :size="18" />
-              <span>{{ list.length ? '继续上次创作' : '体验示例故事' }}</span>
+              <span>继续上次创作</span>
             </button>
           </div>
 

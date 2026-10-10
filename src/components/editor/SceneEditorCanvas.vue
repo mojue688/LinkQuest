@@ -390,6 +390,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
+  min-height: 180px;
   border: 1px solid var(--lq-line);
   border-radius: var(--lq-radius-md);
   overflow: hidden;
@@ -557,5 +558,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 @media (max-width: 600px) {
   .sec__item-label { font-size: 9px; }
   .sec__hint { font-size: 10px; }
+  .sec__canvas { min-height: 220px; }
+  .sec__item { min-width: 44px; min-height: 44px; }
 }
 </style>

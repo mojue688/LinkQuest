@@ -5,6 +5,8 @@ import { useAdventureStore } from '@/stores/adventure'
 import { useSettingsStore } from '@/stores/settings'
 import { useUI } from '@/stores/ui'
 import type { Adventure } from '@/types/adventure'
+import { NodeType } from '@/types/adventure'
+import { exportJSON, downloadBlob, importFromFile } from '@/storage/export'
 import NodeCanvas from '@/components/editor/NodeCanvas.vue'
 import NodeInspector from '@/components/editor/NodeInspector.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
@@ -28,6 +30,51 @@ const title = computed(() => store.current?.meta.title ?? '未命名冒险')
 const aiQueryPrompt = computed(() => (route.query.prompt as string) ?? '')
 const aiQueryOpen = computed(() => route.query.ai === '1')
 
+/* ---------- 布局状态 ---------- */
+const viewportW = ref(typeof window !== 'undefined' ? window.innerWidth : 1280)
+const isMobile = computed(() => viewportW.value < 768)
+const isTablet = computed(() => viewportW.value >= 768 && viewportW.value < 1024)
+const leftCollapsed = ref(false)
+const inspectorOpen = ref(true)
+const inspectorWidth = ref(340)
+const mobileMenu = ref<null | 'add' | 'actions'>(null)
+const mobileInspector = ref(false)
+
+function onResize() {
+  viewportW.value = window.innerWidth
+}
+onMounted(() => window.addEventListener('resize', onResize))
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+
+watch(isTablet, (t) => {
+  if (t) {
+    leftCollapsed.value = true
+  }
+})
+
+/* 属性面板宽度拖拽 */
+const resizing = ref(false)
+function onResizerDown(e: MouseEvent) {
+  e.preventDefault()
+  resizing.value = true
+  const startX = e.clientX
+  const startW = inspectorWidth.value
+  function onMove(ev: MouseEvent) {
+    const delta = startX - ev.clientX
+    const w = Math.max(280, Math.min(480, startW + delta))
+    inspectorWidth.value = w
+  }
+  function onUp() {
+    resizing.value = false
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
+const nodeCanvasRef = ref<InstanceType<typeof NodeCanvas> | null>(null)
+
 function syncMetaForm() {
   if (!store.current) return
   metaForm.value = {
@@ -40,6 +87,9 @@ function syncMetaForm() {
 
 onMounted(async () => {
   settings.load()
+  if (viewportW.value >= 768 && viewportW.value < 1024) {
+    leftCollapsed.value = true
+  }
   if (id.value) {
     await store.open(id.value)
   } else if (!store.current) {
@@ -48,7 +98,6 @@ onMounted(async () => {
   }
   syncMetaForm()
 
-  // 从首页带 prompt 跳转过来，自动打开 AI 面板
   if (aiQueryOpen.value && aiQueryPrompt.value) {
     showAI.value = true
   }
@@ -65,7 +114,16 @@ watch(showMeta, (open) => {
   if (open) syncMetaForm()
 })
 
-// 自动保存（防抖 2.5s）
+/* 选中节点时，移动端自动打开属性抽屉 */
+watch(
+  () => store.selectedNodeId,
+  (nid) => {
+    if (isMobile.value && nid) {
+      mobileInspector.value = true
+    }
+  }
+)
+
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 watch(
   () => store.dirty,
@@ -77,13 +135,11 @@ watch(
   }
 )
 
-// 离开前保存
 onBeforeUnmount(() => {
   clearTimeout(saveTimer)
   if (store.dirty) store.saveCurrent()
 })
 
-// 键盘快捷键
 function onKeydown(e: KeyboardEvent) {
   const target = e.target as HTMLElement
   const inField =
@@ -128,7 +184,6 @@ async function applyAI(adv: Adventure) {
   await store.loadList()
   showAI.value = false
   syncMetaForm()
-  // 清除 query
   router.replace({ name: 'editor', params: { id: adv.meta.id } })
 }
 
@@ -151,17 +206,85 @@ const infoIssues = computed(() => issueList.value.filter((i) => i.level === 'inf
 function jumpToNode(nodeId?: string) {
   if (!nodeId) return
   store.selectNode(nodeId)
+  nodeCanvasRef.value?.focusNode(nodeId)
   showIssues.value = false
 }
+
+/* ---------- 移动端操作（复用于底部栏） ---------- */
+function nextPosition() {
+  const count = store.current?.nodes.length ?? 0
+  return { x: 220 + (count % 4) * 200, y: 120 + Math.floor(count / 4) * 160 }
+}
+function addNode(type: NodeType) {
+  store.addNode(type, nextPosition())
+  mobileMenu.value = null
+}
+async function handleSave() {
+  const ok = await store.saveCurrent()
+  if (ok) ui.success('已保存')
+}
+async function handlePlay() {
+  await store.saveCurrent()
+  if (store.currentId) {
+    router.push({ name: 'play', params: { id: store.currentId } })
+  }
+}
+function handleExport() {
+  if (!store.current) return
+  const result = exportJSON(store.current)
+  downloadBlob(result.blob, result.filename)
+  ui.success('已导出 JSON')
+}
+function handleImport() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.json,application/json'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    try {
+      const adv = await importFromFile(file)
+      const ok = await ui.confirm({
+        title: '导入作品',
+        message: `即将导入「${adv.meta.title}」，当前未保存的编辑将被替换。是否继续？`,
+        confirmText: '导入并替换',
+      })
+      if (!ok) return
+      store.setCurrent(adv)
+      await store.saveCurrent()
+      await store.loadList()
+      ui.success('导入成功')
+    } catch (e) {
+      ui.error((e as Error).message)
+    }
+  }
+  input.click()
+}
+
+const mobileAddTypes = [
+  { type: NodeType.Scene, icon: 'bookOpen', label: '场景' },
+  { type: NodeType.Clue, icon: 'search', label: '线索' },
+  { type: NodeType.Puzzle, icon: 'key', label: '谜题' },
+  { type: NodeType.Ending, icon: 'flag', label: '结局' },
+]
 </script>
 
 <template>
   <div class="editor" v-if="store.current">
+    <!-- 顶部栏 -->
     <header class="editor__top">
       <div class="editor__top-left">
         <button class="lq-btn lq-btn--ghost lq-btn--sm" @click="backHome">
           <AppIcon name="arrowLeft" :size="15" />
-          <span>首页</span>
+          <span class="editor__back-text">首页</span>
+        </button>
+        <button
+          v-if="!isMobile"
+          class="editor__icon-btn"
+          :title="leftCollapsed ? '展开工具栏' : '折叠工具栏'"
+          @click="leftCollapsed = !leftCollapsed"
+        >
+          <AppIcon :name="leftCollapsed ? 'chevronRight' : 'chevronLeft'" :size="15" />
         </button>
         <button class="editor__title" @click="showMeta = true">
           <AppIcon name="book" :size="15" />
@@ -186,9 +309,9 @@ function jumpToNode(nodeId?: string) {
           title="剧情检查"
         >
           <AppIcon name="alert" :size="14" />
-          <span v-if="errorIssues.length">{{ errorIssues.length }} 问题</span>
-          <span v-else-if="warnIssues.length">{{ warnIssues.length }} 提醒</span>
-          <span v-else>检查通过</span>
+          <span v-if="errorIssues.length" class="editor__chip-text">{{ errorIssues.length }} 问题</span>
+          <span v-else-if="warnIssues.length" class="editor__chip-text">{{ warnIssues.length }} 提醒</span>
+          <span v-else class="editor__chip-text">检查通过</span>
         </button>
         <button
           class="lq-btn lq-btn--ghost lq-btn--sm"
@@ -206,30 +329,173 @@ function jumpToNode(nodeId?: string) {
         >
           <AppIcon name="redo" :size="15" />
         </button>
-        <button class="lq-btn lq-btn--ghost lq-btn--sm" @click="showMeta = true">
+        <button
+          v-if="!isMobile"
+          class="editor__icon-btn"
+          :title="inspectorOpen ? '收起属性面板' : '展开属性面板'"
+          @click="inspectorOpen = !inspectorOpen"
+        >
+          <AppIcon name="layers" :size="15" />
+        </button>
+        <button
+          v-if="!isMobile"
+          class="lq-btn lq-btn--ghost lq-btn--sm"
+          @click="showMeta = true"
+        >
           <AppIcon name="info" :size="15" />
           <span>信息</span>
         </button>
         <button
           class="lq-btn lq-btn--sm"
           :disabled="store.saving"
-          @click="store.saveCurrent()"
+          @click="handleSave"
         >
           <AppIcon name="save" :size="15" />
-          <span>保存</span>
+          <span class="editor__save-text">保存</span>
+        </button>
+        <button
+          v-if="!isMobile"
+          class="lq-btn lq-btn--sm"
+          @click="handlePlay"
+        >
+          <AppIcon name="play" :size="15" />
+          <span>试玩</span>
         </button>
       </div>
     </header>
 
-    <div class="editor__body">
-      <EditorToolbar @open-ai="showAI = true" @open-meta="showMeta = true" />
+    <!-- 桌面/平板主体 -->
+    <div v-if="!isMobile" class="editor__body">
+      <EditorToolbar :collapsed="leftCollapsed" @open-ai="showAI = true" @open-meta="showMeta = true" />
       <div class="editor__canvas">
-        <NodeCanvas />
+        <NodeCanvas ref="nodeCanvasRef" />
       </div>
-      <div class="editor__inspector">
+      <div
+        v-if="inspectorOpen"
+        class="editor__resizer"
+        @mousedown="onResizerDown"
+      ></div>
+      <div
+        v-if="inspectorOpen"
+        class="editor__inspector"
+        :style="{ width: inspectorWidth + 'px' }"
+      >
         <NodeInspector />
       </div>
     </div>
+
+    <!-- 移动端主体 -->
+    <div v-else class="editor__mobile-body">
+      <div class="editor__canvas editor__canvas--mobile">
+        <NodeCanvas ref="nodeCanvasRef" />
+      </div>
+    </div>
+
+    <!-- 移动端底部工具栏 -->
+    <nav v-if="isMobile" class="editor__bottombar">
+      <button class="editor__bb-btn" @click="mobileMenu = mobileMenu === 'add' ? null : 'add'">
+        <AppIcon name="plus" :size="18" />
+        <span>添加</span>
+      </button>
+      <button class="editor__bb-btn" @click="mobileMenu = mobileMenu === 'actions' ? null : 'actions'">
+        <AppIcon name="menu" :size="18" />
+        <span>操作</span>
+      </button>
+      <button class="editor__bb-btn" @click="handleSave">
+        <AppIcon name="save" :size="18" />
+        <span>保存</span>
+      </button>
+      <button class="editor__bb-btn" @click="handlePlay">
+        <AppIcon name="play" :size="18" />
+        <span>试玩</span>
+      </button>
+      <button
+        class="editor__bb-btn"
+        :disabled="!store.selectedNode"
+        @click="mobileInspector = true"
+      >
+        <AppIcon name="edit" :size="18" />
+        <span>属性</span>
+      </button>
+    </nav>
+
+    <!-- 移动端添加节点菜单 -->
+    <transition name="lq-sheet">
+      <div v-if="isMobile && mobileMenu === 'add'" class="editor__sheet" @click.self="mobileMenu = null">
+        <div class="editor__sheet-panel">
+          <div class="editor__sheet-head">
+            <h3>添加节点</h3>
+            <button class="lq-btn lq-btn--ghost lq-btn--icon" @click="mobileMenu = null">
+              <AppIcon name="close" :size="16" />
+            </button>
+          </div>
+          <div class="editor__sheet-body">
+            <button
+              v-for="nt in mobileAddTypes"
+              :key="nt.type"
+              class="editor__sheet-item"
+              @click="addNode(nt.type)"
+            >
+              <AppIcon :name="nt.icon" :size="18" />
+              <span>{{ nt.label }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- 移动端操作菜单 -->
+    <transition name="lq-sheet">
+      <div v-if="isMobile && mobileMenu === 'actions'" class="editor__sheet" @click.self="mobileMenu = null">
+        <div class="editor__sheet-panel">
+          <div class="editor__sheet-head">
+            <h3>操作</h3>
+            <button class="lq-btn lq-btn--ghost lq-btn--icon" @click="mobileMenu = null">
+              <AppIcon name="close" :size="16" />
+            </button>
+          </div>
+          <div class="editor__sheet-body">
+            <button class="editor__sheet-item" @click="showMeta = true; mobileMenu = null">
+              <AppIcon name="info" :size="18" />
+              <span>作品信息</span>
+            </button>
+            <button class="editor__sheet-item" @click="showAI = true; mobileMenu = null">
+              <AppIcon name="sparkles" :size="18" />
+              <span>AI 助手</span>
+            </button>
+            <button class="editor__sheet-item" @click="handleExport(); mobileMenu = null">
+              <AppIcon name="download" :size="18" />
+              <span>导出 JSON</span>
+            </button>
+            <button class="editor__sheet-item" @click="handleImport(); mobileMenu = null">
+              <AppIcon name="upload" :size="18" />
+              <span>导入 JSON</span>
+            </button>
+            <button class="editor__sheet-item" @click="showIssues = true; mobileMenu = null">
+              <AppIcon name="alert" :size="18" />
+              <span>剧情检查</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- 移动端属性抽屉 -->
+    <transition name="lq-drawer">
+      <div v-if="isMobile && mobileInspector" class="editor__drawer">
+        <div class="editor__drawer-panel">
+          <div class="editor__drawer-head">
+            <h3>节点属性</h3>
+            <button class="lq-btn lq-btn--ghost lq-btn--icon" @click="mobileInspector = false">
+              <AppIcon name="close" :size="16" />
+            </button>
+          </div>
+          <div class="editor__drawer-body">
+            <NodeInspector />
+          </div>
+        </div>
+      </div>
+    </transition>
 
     <!-- 问题检查面板 -->
     <transition name="lq-transition-fade">
@@ -359,9 +625,12 @@ function jumpToNode(nodeId?: string) {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--lq-paper);
 }
+
+/* 顶部栏 */
 .editor__top {
   display: flex;
   align-items: center;
@@ -378,6 +647,26 @@ function jumpToNode(nodeId?: string) {
   display: flex;
   align-items: center;
   gap: var(--lq-space-2);
+  min-width: 0;
+}
+.editor__top-left { flex: 1; }
+.editor__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--lq-line);
+  background: var(--lq-paper);
+  border-radius: var(--lq-radius-md);
+  color: var(--lq-ink-soft);
+  cursor: pointer;
+  transition: all var(--lq-dur) var(--lq-ease);
+  flex-shrink: 0;
+}
+.editor__icon-btn:hover {
+  border-color: var(--lq-ink-faint);
+  color: var(--lq-ink);
 }
 .editor__title {
   display: flex;
@@ -393,9 +682,15 @@ function jumpToNode(nodeId?: string) {
   font-size: var(--lq-fs-md);
   font-weight: 600;
   transition: border-color var(--lq-dur) var(--lq-ease);
+  min-width: 0;
 }
 .editor__title:hover { border-color: var(--lq-line); }
-.editor__title-text { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor__title-text {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .editor__save {
   font-family: var(--lq-font-ui);
   font-size: 11px;
@@ -404,6 +699,7 @@ function jumpToNode(nodeId?: string) {
   border-radius: var(--lq-radius);
   background: var(--lq-moss-dim);
   color: var(--lq-moss);
+  flex-shrink: 0;
 }
 .editor__save.is-dirty {
   background: var(--lq-rust-dim);
@@ -420,10 +716,13 @@ function jumpToNode(nodeId?: string) {
   font-size: var(--lq-fs-xs);
   color: var(--lq-ink-soft);
   cursor: pointer;
+  flex-shrink: 0;
 }
 .editor__chip:hover { border-color: var(--lq-ink-faint); }
 .editor__chip.has-error { border-color: var(--lq-bad); color: var(--lq-bad); }
 .editor__chip.has-warn { border-color: var(--lq-warn); color: var(--lq-warn); }
+
+/* 桌面主体 */
 .editor__body {
   display: flex;
   flex: 1;
@@ -434,8 +733,17 @@ function jumpToNode(nodeId?: string) {
   min-width: 0;
   padding: var(--lq-space-3);
 }
+.editor__resizer {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--lq-line);
+  border-left: 1px solid var(--lq-line);
+  border-right: 1px solid var(--lq-line);
+  transition: background var(--lq-dur) var(--lq-ease);
+}
+.editor__resizer:hover { background: var(--lq-ink-faint); }
 .editor__inspector {
-  width: 340px;
   flex-shrink: 0;
   overflow: hidden;
   border-left: 1px solid var(--lq-line);
@@ -532,19 +840,172 @@ function jumpToNode(nodeId?: string) {
 .editor__issue--info { background: var(--lq-slate-dim); color: var(--lq-info); }
 .editor__issue:hover { filter: brightness(0.96); }
 
-@media (max-width: 900px) {
-  .editor__inspector {
-    width: 280px;
-  }
+/* ---------- 移动端 ---------- */
+.editor__mobile-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
-@media (max-width: 720px) {
-  .editor__body { flex-direction: column; }
-  .editor__inspector {
-    width: 100%;
-    height: 240px;
-    border-left: none;
-    border-top: 1px solid var(--lq-line);
-  }
-  .editor__top-right .lq-btn span { display: none; }
+.editor__canvas--mobile {
+  flex: 1;
+  min-width: 0;
+  padding: var(--lq-space-2);
+}
+.editor__bottombar {
+  display: flex;
+  flex-shrink: 0;
+  background: var(--lq-paper-2);
+  border-top: 1px solid var(--lq-line);
+  padding: 6px env(safe-area-inset-bottom, 0px);
+  z-index: 20;
+}
+.editor__bb-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  color: var(--lq-ink-soft);
+  font-size: 11px;
+  cursor: pointer;
+  min-height: 52px;
+  transition: color var(--lq-dur) var(--lq-ease);
+}
+.editor__bb-btn:active { color: var(--lq-wine); }
+.editor__bb-btn:disabled { opacity: 0.4; }
+
+/* 移动端弹出层 */
+.editor__sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  background: rgba(28, 26, 23, 0.5);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.editor__sheet-panel {
+  width: 100%;
+  max-width: 480px;
+  background: var(--lq-paper);
+  border-top-left-radius: var(--lq-radius-lg);
+  border-top-right-radius: var(--lq-radius-lg);
+  box-shadow: var(--lq-shadow-lg);
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.editor__sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--lq-space-4) var(--lq-space-5);
+  border-bottom: 1px solid var(--lq-line);
+}
+.editor__sheet-head h3 { margin: 0; }
+.editor__sheet-body {
+  padding: var(--lq-space-3) var(--lq-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--lq-space-2);
+  overflow-y: auto;
+}
+.editor__sheet-item {
+  display: flex;
+  align-items: center;
+  gap: var(--lq-space-3);
+  padding: 14px var(--lq-space-4);
+  background: var(--lq-paper-2);
+  border: 1px solid var(--lq-line);
+  border-radius: var(--lq-radius-md);
+  color: var(--lq-ink);
+  font-size: var(--lq-fs-md);
+  cursor: pointer;
+  text-align: left;
+  min-height: 48px;
+}
+.editor__sheet-item:active { background: var(--lq-paper-3); }
+
+/* 移动端属性抽屉 */
+.editor__drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 88;
+  background: rgba(28, 26, 23, 0.5);
+  backdrop-filter: blur(2px);
+  display: flex;
+  justify-content: flex-end;
+}
+.editor__drawer-panel {
+  width: 100%;
+  max-width: 440px;
+  height: 100%;
+  background: var(--lq-paper);
+  box-shadow: var(--lq-shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+.editor__drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--lq-space-4) var(--lq-space-5);
+  border-bottom: 1px solid var(--lq-line);
+  flex-shrink: 0;
+  padding-top: calc(var(--lq-space-4) + env(safe-area-inset-top, 0px));
+}
+.editor__drawer-head h3 { margin: 0; }
+.editor__drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* 抽屉/弹出层过渡 */
+.lq-sheet-enter-active,
+.lq-sheet-leave-active {
+  transition: opacity 0.2s var(--lq-ease);
+}
+.lq-sheet-enter-active .editor__sheet-panel,
+.lq-sheet-leave-active .editor__sheet-panel {
+  transition: transform 0.25s var(--lq-ease);
+}
+.lq-sheet-enter-from,
+.lq-sheet-leave-to { opacity: 0; }
+.lq-sheet-enter-from .editor__sheet-panel,
+.lq-sheet-leave-to .editor__sheet-panel { transform: translateY(100%); }
+
+.lq-drawer-enter-active,
+.lq-drawer-leave-active {
+  transition: opacity 0.2s var(--lq-ease);
+}
+.lq-drawer-enter-active .editor__drawer-panel,
+.lq-drawer-leave-active .editor__drawer-panel {
+  transition: transform 0.25s var(--lq-ease);
+}
+.lq-drawer-enter-from,
+.lq-drawer-leave-to { opacity: 0; }
+.lq-drawer-enter-from .editor__drawer-panel,
+.lq-drawer-leave-to .editor__drawer-panel { transform: translateX(100%); }
+
+/* 平板/窄桌面 */
+@media (max-width: 1024px) {
+  .editor__title-text { max-width: 160px; }
+  .editor__chip-text { display: none; }
+}
+@media (max-width: 900px) and (min-width: 768px) {
+  .editor__save-text { display: none; }
+}
+@media (max-width: 767px) {
+  .editor__top { padding: var(--lq-space-2) var(--lq-space-3); height: 48px; }
+  .editor__back-text { display: none; }
+  .editor__save-text { display: none; }
+  .editor__title-text { max-width: 120px; }
 }
 </style>

@@ -6,6 +6,7 @@ import { NodeType } from '@/types/adventure'
 import { exportJSON, downloadBlob, importFromFile } from '@/storage/export'
 import AppIcon from '@/components/common/AppIcon.vue'
 
+defineProps<{ collapsed?: boolean }>()
 const emit = defineEmits<{ (e: 'open-ai'): void; (e: 'open-meta'): void }>()
 const router = useRouter()
 const store = useAdventureStore()
@@ -74,59 +75,60 @@ function handleImport() {
 </script>
 
 <template>
-  <aside class="toolbar">
+  <aside class="toolbar" :class="{ 'toolbar--collapsed': collapsed }">
     <div class="toolbar__group">
-      <p class="toolbar__title">添加节点</p>
+      <p v-if="!collapsed" class="toolbar__title">添加节点</p>
       <button
         v-for="nt in nodeTypes"
         :key="nt.type"
         class="toolbar__btn"
+        :title="collapsed ? `添加${nt.label}节点` : undefined"
         @click="addNode(nt.type)"
       >
         <span class="toolbar__icon" :class="`is-${nt.color}`">
           <AppIcon :name="nt.icon" :size="15" />
         </span>
-        <span class="toolbar__label">{{ nt.label }}</span>
+        <span v-if="!collapsed" class="toolbar__label">{{ nt.label }}</span>
       </button>
     </div>
 
-    <hr class="lq-divider lq-divider--soft" />
+    <hr v-if="!collapsed" class="lq-divider lq-divider--soft" />
 
     <div class="toolbar__group">
-      <p class="toolbar__title">操作</p>
-      <button class="toolbar__btn" @click="emit('open-meta')">
+      <p v-if="!collapsed" class="toolbar__title">操作</p>
+      <button class="toolbar__btn" :title="collapsed ? '作品信息' : undefined" @click="emit('open-meta')">
         <span class="toolbar__icon"><AppIcon name="info" :size="15" /></span>
-        <span class="toolbar__label">作品信息</span>
+        <span v-if="!collapsed" class="toolbar__label">作品信息</span>
       </button>
-      <button class="toolbar__btn" @click="handleSave">
+      <button class="toolbar__btn" :title="collapsed ? '保存' : undefined" @click="handleSave">
         <span class="toolbar__icon"><AppIcon name="save" :size="15" /></span>
-        <span class="toolbar__label">保存</span>
+        <span v-if="!collapsed" class="toolbar__label">保存</span>
       </button>
-      <button class="toolbar__btn toolbar__btn--accent" @click="handlePlay">
+      <button class="toolbar__btn toolbar__btn--accent" :title="collapsed ? '试玩' : undefined" @click="handlePlay">
         <span class="toolbar__icon is-wine"><AppIcon name="play" :size="15" /></span>
-        <span class="toolbar__label">试玩</span>
+        <span v-if="!collapsed" class="toolbar__label">试玩</span>
       </button>
-      <button class="toolbar__btn" @click="handleExport">
+      <button class="toolbar__btn" :title="collapsed ? '导出 JSON' : undefined" @click="handleExport">
         <span class="toolbar__icon"><AppIcon name="download" :size="15" /></span>
-        <span class="toolbar__label">导出 JSON</span>
+        <span v-if="!collapsed" class="toolbar__label">导出 JSON</span>
       </button>
-      <button class="toolbar__btn" @click="handleImport">
+      <button class="toolbar__btn" :title="collapsed ? '导入 JSON' : undefined" @click="handleImport">
         <span class="toolbar__icon"><AppIcon name="upload" :size="15" /></span>
-        <span class="toolbar__label">导入 JSON</span>
+        <span v-if="!collapsed" class="toolbar__label">导入 JSON</span>
       </button>
     </div>
 
-    <hr class="lq-divider lq-divider--soft" />
+    <hr v-if="!collapsed" class="lq-divider lq-divider--soft" />
 
     <div class="toolbar__group">
-      <p class="toolbar__title">AI</p>
-      <button class="toolbar__btn toolbar__btn--ai" @click="emit('open-ai')">
+      <p v-if="!collapsed" class="toolbar__title">AI</p>
+      <button class="toolbar__btn toolbar__btn--ai" :title="collapsed ? 'AI 助手' : undefined" @click="emit('open-ai')">
         <span class="toolbar__icon is-gold"><AppIcon name="sparkles" :size="15" /></span>
-        <span class="toolbar__label">AI 助手</span>
+        <span v-if="!collapsed" class="toolbar__label">AI 助手</span>
       </button>
     </div>
 
-    <div class="toolbar__hint">
+    <div v-if="!collapsed" class="toolbar__hint">
       <AppIcon name="info" :size="13" />
       <span>拖拽节点右侧锚点可连接分支</span>
     </div>
@@ -143,6 +145,10 @@ function handleImport() {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+}
+.toolbar--collapsed {
+  width: 52px;
+  padding: var(--lq-space-3) var(--lq-space-2);
 }
 .toolbar__title {
   font-size: 10px;
@@ -176,6 +182,10 @@ function handleImport() {
   border-color: var(--lq-ink-faint);
   background: var(--lq-paper-3);
 }
+.toolbar--collapsed .toolbar__btn {
+  padding: 8px;
+  justify-content: center;
+}
 .toolbar__btn--accent {
   border-color: var(--lq-wine);
 }
@@ -194,6 +204,7 @@ function handleImport() {
   justify-content: center;
   width: 20px;
   color: var(--lq-ink-soft);
+  flex-shrink: 0;
 }
 .toolbar__icon.is-slate { color: var(--lq-slate); }
 .toolbar__icon.is-gold { color: var(--lq-gold); }
