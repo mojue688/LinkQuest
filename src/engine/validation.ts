@@ -8,6 +8,8 @@ import {
   type ValidationIssue,
   type ValidationResult,
   NodeType,
+  PuzzleKind,
+  InteractAction,
 } from '@/types/adventure'
 
 function issue(
@@ -106,6 +108,62 @@ export function validateReferences(adventure: Adventure): ValidationResult {
           nodeId: n.id,
         })
       )
+  }
+  return { ok: issues.every((i) => i.level !== 'error'), issues }
+}
+
+/** 校验谜题类型特定配置 */
+export function validatePuzzleConfig(adventure: Adventure): ValidationResult {
+  const issues: ValidationIssue[] = []
+  for (const n of adventure.nodes) {
+    if (n.type !== NodeType.Puzzle || !n.puzzle) continue
+    const p = n.puzzle
+    const kind = p.kind ?? PuzzleKind.Text
+    if (kind === PuzzleKind.NumberLock && (!p.digits || p.digits < 1)) {
+      issues.push(
+        issue('warning', 'PUZZLE_NO_DIGITS', '数字锁谜题未设置位数。', { nodeId: n.id })
+      )
+    }
+    if (kind === PuzzleKind.SymbolSequence && (!p.symbols || p.symbols.length === 0)) {
+      issues.push(
+        issue('warning', 'PUZZLE_NO_SYMBOLS', '符号序列谜题未设置符号集。', { nodeId: n.id })
+      )
+    }
+    if (kind === PuzzleKind.Pattern && (!p.patterns || p.patterns.length === 0)) {
+      issues.push(
+        issue('warning', 'PUZZLE_NO_PATTERNS', '图案谜题未设置图案列表。', { nodeId: n.id })
+      )
+    }
+  }
+  return { ok: issues.every((i) => i.level !== 'error'), issues }
+}
+
+/** 校验可交互物品的目标引用 */
+export function validateInteractables(adventure: Adventure): ValidationResult {
+  const issues: ValidationIssue[] = []
+  const nodeIds = new Set(adventure.nodes.map((n) => n.id))
+  const itemKeys = new Set(adventure.items.map((i) => i.key))
+  for (const n of adventure.nodes) {
+    if (!n.interactables) continue
+    for (const it of n.interactables) {
+      if (it.action === InteractAction.GoToNode && it.target && !nodeIds.has(it.target)) {
+        issues.push(
+          issue('warning', 'INTERACT_GOTO', `可交互物品「${it.name}」的跳转目标节点不存在。`, {
+            nodeId: n.id,
+          })
+        )
+      }
+      if (
+        (it.action === InteractAction.CollectClue || it.action === InteractAction.GiveItem) &&
+        it.target && !itemKeys.has(it.target)
+      ) {
+        issues.push(
+          issue('warning', 'INTERACT_ITEM', `可交互物品「${it.name}」引用了未定义的物品：${it.target}`, {
+            nodeId: n.id,
+          })
+        )
+      }
+    }
   }
   return { ok: issues.every((i) => i.level !== 'error'), issues }
 }
@@ -253,6 +311,8 @@ export function validateAdventure(adventure: Adventure): ValidationResult {
     validateNodes(adventure),
     validateChoiceTargets(adventure),
     validateReferences(adventure),
+    validatePuzzleConfig(adventure),
+    validateInteractables(adventure),
     validateGraph(adventure),
   ])
 }

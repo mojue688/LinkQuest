@@ -6,7 +6,7 @@
  * - AI 审查失败不影响作品保存和游玩。
  */
 import type { AIClient, ReviewRequest, ReviewResponse, PlotReviewResult, PlotIssue } from './types'
-import { NodeType, type Adventure, type ID } from '@/types/adventure'
+import { NodeType, PuzzleKind, InteractAction, type Adventure, type ID } from '@/types/adventure'
 import { analyzeReachability } from '@/engine/validation'
 import { fallbackReview } from './fallback'
 
@@ -58,6 +58,37 @@ export function reviewAdventureLocal(adventure: Adventure): PlotReviewResult {
           suggestion: '设置一个明确的答案。',
         })
       }
+      // 谜题类型特定配置检查
+      if (n.puzzle) {
+        const kind = n.puzzle.kind ?? PuzzleKind.Text
+        if (kind === PuzzleKind.NumberLock && (!n.puzzle.digits || n.puzzle.digits < 1)) {
+          issues.push({
+            level: 'warning',
+            category: 'puzzle',
+            message: `数字锁谜题「${n.content.title}」未设置位数。`,
+            nodeId: n.id,
+            suggestion: '设置密码位数（如 3 表示三位数）。',
+          })
+        }
+        if (kind === PuzzleKind.SymbolSequence && (!n.puzzle.symbols || n.puzzle.symbols.length === 0)) {
+          issues.push({
+            level: 'warning',
+            category: 'puzzle',
+            message: `符号序列谜题「${n.content.title}」未设置符号集。`,
+            nodeId: n.id,
+            suggestion: '提供可选符号列表。',
+          })
+        }
+        if (kind === PuzzleKind.Pattern && (!n.puzzle.patterns || n.puzzle.patterns.length === 0)) {
+          issues.push({
+            level: 'warning',
+            category: 'puzzle',
+            message: `图案谜题「${n.content.title}」未设置图案列表。`,
+            nodeId: n.id,
+            suggestion: '提供可选图案 ID 列表。',
+          })
+        }
+      }
       // 谜题节点应有出边
       const hasOut = adventure.choices.some((c) => c.fromNodeId === n.id)
       if (!hasOut) {
@@ -78,6 +109,34 @@ export function reviewAdventureLocal(adventure: Adventure): PlotReviewResult {
         nodeId: n.id,
         suggestion: '设置线索物品标识和名称。',
       })
+    }
+    // 可交互物品目标检查
+    if (n.interactables) {
+      const nodeIds = new Set(adventure.nodes.map((nd) => nd.id))
+      const itemKeys = new Set(adventure.items.map((i) => i.key))
+      for (const it of n.interactables) {
+        if (it.action === InteractAction.GoToNode && it.target && !nodeIds.has(it.target)) {
+          issues.push({
+            level: 'warning',
+            category: 'interactable',
+            message: `可交互物品「${it.name}」的跳转目标节点不存在。`,
+            nodeId: n.id,
+            suggestion: '重新设置跳转目标。',
+          })
+        }
+        if (
+          (it.action === InteractAction.CollectClue || it.action === InteractAction.GiveItem) &&
+          it.target && !itemKeys.has(it.target)
+        ) {
+          issues.push({
+            level: 'warning',
+            category: 'interactable',
+            message: `可交互物品「${it.name}」引用了未定义的物品：${it.target}`,
+            nodeId: n.id,
+            suggestion: '先在物品列表中添加该物品。',
+          })
+        }
+      }
     }
   }
 
