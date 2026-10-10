@@ -68,6 +68,7 @@ LinkQuest 是一个 **纯前端** 互动叙事创作平台，核心目标是让�
 | 本地存储 | Dexie | ^4.0.4 | IndexedDB 封装，作品与存档持久化 |
 | 类型检查 | TypeScript | ^5.4.0 | 全量类型安全 |
 | Vue 类型检查 | vue-tsc | ^2.0.6 | Vue SFC 类型检查 |
+| 单元测试 | Vitest | ^2.1.9 | 测试框架 |
 
 ### 无运行时后端
 
@@ -578,7 +579,9 @@ assetName(id: string): string
 | 死胡同节点 | warning | 非结局节点但无出边 |
 | 无结局路径 | warning | 存在无法到达任何结局的路径 |
 | 谜题答案 | info | 建议设置答案 |
+| 谜题类型配置 | warning | 数字锁缺位数/符号序列缺符号集/图案谜题缺图案列表 |
 | 线索绑定 | info | 建议绑定物品 |
+| 交互物品目标 | warning | 跳转目标节点不存在/引用未定义物品 |
 
 ---
 
@@ -908,6 +911,12 @@ npm run build
 
 # 预览生产构建
 npm run preview
+
+# 运行单元测试
+npm run test
+
+# 测试监听模式
+npm run test:watch
 ```
 
 ### 代码规范
