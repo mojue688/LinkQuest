@@ -24,7 +24,7 @@ onMounted(() => {
 
 const list = computed(() => store.list)
 const isEmpty = computed(() => !store.loading && list.value.length === 0)
-const aiReady = computed(() => settings.enabled && !!settings.apiKey && !!settings.endpoint)
+const aiReady = computed(() => settings.enabled && settings.isConfigured)
 
 const recent = computed(() => list.value.slice(0, 6))
 

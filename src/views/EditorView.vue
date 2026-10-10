@@ -224,7 +224,11 @@ async function handleSave() {
   if (ok) ui.success('已保存')
 }
 async function handlePlay() {
-  await store.saveCurrent()
+  const ok = await store.saveCurrent()
+  if (!ok) {
+    ui.error('保存失败，无法进入试玩，请检查浏览器存储空间')
+    return
+  }
   if (store.currentId) {
     router.push({ name: 'play', params: { id: store.currentId } })
   }

@@ -39,11 +39,12 @@ function normalizeChatUrl(endpoint: string): string {
   return `${base}/chat/completions`
 }
 
-/** 带超时的 fetch */
+/** 带超时的 fetch，支持外部取消信号 */
 function fetchWithTimeout(
   url: string,
   init: RequestInit,
-  timeout: number
+  timeout: number,
+  externalSignal?: AbortSignal
 ): Promise<Response> {
   return new Promise((resolve, reject) => {
     const controller = new AbortController()
@@ -51,6 +52,22 @@ function fetchWithTimeout(
       controller.abort()
       reject(new AIError('timeout', `请求超时（${timeout}ms）`))
     }, timeout)
+
+    // 外部取消时立即 abort
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        clearTimeout(timer)
+        controller.abort()
+        reject(new AIError('timeout', '请求已取消。'))
+        return
+      }
+      externalSignal.addEventListener('abort', () => {
+        clearTimeout(timer)
+        controller.abort()
+        reject(new AIError('timeout', '请求已取消。'))
+      }, { once: true })
+    }
+
     fetch(url, { ...init, signal: controller.signal })
       .then((res) => {
         clearTimeout(timer)
@@ -59,7 +76,11 @@ function fetchWithTimeout(
       .catch((err) => {
         clearTimeout(timer)
         if (err.name === 'AbortError') {
-          reject(new AIError('timeout', `请求超时（${timeout}ms）`))
+          if (externalSignal?.aborted) {
+            reject(new AIError('timeout', '请求已取消。'))
+          } else {
+            reject(new AIError('timeout', `请求超时（${timeout}ms）`))
+          }
         } else {
           reject(new AIError('network', `网络请求失败：${err.message}`))
         }
@@ -147,7 +168,8 @@ class OpenAICompatibleClient implements AIClient {
             },
             body: JSON.stringify(req),
           },
-          timeout
+          timeout,
+          req.signal
         )
         return await parseResponse(res)
       } catch (err) {
@@ -233,6 +255,7 @@ class OpenAICompatibleClient implements AIClient {
       temperature: 0.85,
       max_tokens: 4096,
       response_format: { type: 'json_object' },
+      signal: req.signal,
     })
     const raw = extractContent(res)
     return {

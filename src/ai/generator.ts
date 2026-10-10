@@ -49,7 +49,7 @@ function arr(v: unknown): unknown[] {
 }
 
 /** 校验并规整 AIStory，修复可修复的问题，不可修复则抛出 */
-export function normalizeAIStory(raw: unknown, _requestedEndings = 3): AIStory {
+export function normalizeAIStory(raw: unknown, requestedEndings = 3): AIStory {
   if (!isObj(raw)) {
     throw new AIError('parse', 'AI 返回的不是有效对象。')
   }
@@ -99,6 +99,7 @@ export function normalizeAIStory(raw: unknown, _requestedEndings = 3): AIStory {
       if (typeof rn.puzzleTitle === 'string') node.puzzleTitle = rn.puzzleTitle
       if (typeof rn.puzzleDigits === 'number') node.puzzleDigits = rn.puzzleDigits
       if (Array.isArray(rn.puzzleSymbols)) node.puzzleSymbols = rn.puzzleSymbols.filter((s): s is string => typeof s === 'string')
+      if (Array.isArray(rn.puzzlePatterns)) node.puzzlePatterns = rn.puzzlePatterns.filter((s): s is string => typeof s === 'string')
     }
     // 可交互物品
     const rawInteractables = arr(rn.interactables)
@@ -157,6 +158,13 @@ export function normalizeAIStory(raw: unknown, _requestedEndings = 3): AIStory {
     startNode = nodeMap.get(startNodeId)!
   }
 
+  // 确保起始节点唯一：多余的 start 改为 scene
+  for (const n of nodes) {
+    if (n.type === 'start' && n.id !== startNodeId) {
+      n.type = 'scene'
+    }
+  }
+
   // 规整 choices
   const rawChoices = arr(raw.choices)
   const choices: AIStory['choices'] = []
@@ -199,29 +207,66 @@ export function normalizeAIStory(raw: unknown, _requestedEndings = 3): AIStory {
     }
   }
 
-  // 检查结局数量
-  const endings = nodes.filter((n) => n.type === 'ending')
-  if (endings.length === 0) {
-    // 补一个结局
+  // BFS 从 start 可达的节点集合
+  function reachableFromStart(): Set<string> {
+    const visited = new Set<string>([startNodeId])
+    const queue = [startNodeId]
+    while (queue.length > 0) {
+      const cur = queue.shift()!
+      for (const c of choices) {
+        if (c.from === cur && !visited.has(c.to)) {
+          visited.add(c.to)
+          queue.push(c.to)
+        }
+      }
+    }
+    return visited
+  }
+
+  // 确保结局数量满足要求，并保证所有结局从 start 可达
+  let endings = nodes.filter((n) => n.type === 'ending')
+  const endingKinds = ['good', 'neutral', 'bad', 'secret'] as const
+  let endCounter = 0
+
+  function addEnding(): AIStoryNode {
+    endCounter++
+    const kind = endingKinds[(endings.length + endCounter - 1) % endingKinds.length]
     const endNode: AIStoryNode = {
-      id: 'n_end',
+      id: `n_end_${endCounter}`,
       type: 'ending',
       title: '结局',
       text: '故事到此结束。',
-      endingKind: 'neutral',
+      endingKind: kind,
     }
     nodes.push(endNode)
     nodeMap.set(endNode.id, endNode)
-    // 连接最后一个非结局节点
-    let last: AIStoryNode | undefined
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      if (nodes[i].type !== 'ending' && nodes[i].id !== endNode.id) {
-        last = nodes[i]
+    return endNode
+  }
+
+  // 补足结局数量
+  while (endings.length < requestedEndings) {
+    addEnding()
+    endings = nodes.filter((n) => n.type === 'ending')
+  }
+
+  // 确保所有结局从 start 可达：不可达的结局连接到最近的可达非结局节点
+  const reachable = reachableFromStart()
+  for (const end of endings) {
+    if (reachable.has(end.id)) continue
+    // 找一个可达的非结局节点来连接
+    let donor: AIStoryNode | undefined
+    for (const n of nodes) {
+      if (n.type !== 'ending' && reachable.has(n.id)) {
+        donor = n
         break
       }
     }
-    if (last && !choices.some((c) => c.from === last.id && c.to === endNode.id)) {
-      choices.push({ from: last.id, to: endNode.id, label: '结束' })
+    if (!donor) {
+      // 没有可达的非结局节点，从 start 直接连
+      donor = nodeMap.get(startNodeId)!
+    }
+    if (!choices.some((c) => c.from === donor!.id && c.to === end.id)) {
+      choices.push({ from: donor.id, to: end.id, label: '结束' })
     }
   }
 
@@ -253,22 +298,58 @@ const ENDING_MAP: Record<string, EndingKind> = {
   secret: EndingKind.Secret,
 }
 
-/** 简单的分层布局：从 start BFS，按层级排 x，同层排 y */
-function layoutPositions(nodes: AIStoryNode[], startNodeId: string): Map<string, { x: number; y: number }> {
+/** BFS 分层布局：从 start 按层级排 x，同层排 y */
+function layoutPositions(
+  nodes: AIStoryNode[],
+  startNodeId: string,
+  choices: AIStory['choices']
+): Map<string, { x: number; y: number }> {
   const pos = new Map<string, { x: number; y: number }>()
   const adj = new Map<string, string[]>()
   for (const n of nodes) adj.set(n.id, [])
-  // 这里没有 choices，布局在 convert 里做
-  void adj
-  void startNodeId
-  // 默认网格布局
-  const cols = 4
-  nodes.forEach((n, i) => {
-    pos.set(n.id, {
-      x: 80 + (i % cols) * 220,
-      y: 80 + Math.floor(i / cols) * 170,
+  for (const c of choices) {
+    if (adj.has(c.from)) adj.get(c.from)!.push(c.to)
+  }
+  // BFS 分层
+  const layer = new Map<string, number>()
+  layer.set(startNodeId, 0)
+  const queue = [startNodeId]
+  while (queue.length > 0) {
+    const cur = queue.shift()!
+    const curLayer = layer.get(cur) ?? 0
+    for (const next of adj.get(cur) ?? []) {
+      if (!layer.has(next)) {
+        layer.set(next, curLayer + 1)
+        queue.push(next)
+      }
+    }
+  }
+  // 未被 BFS 访问的节点放到最后一层
+  let maxLayer = 0
+  for (const l of layer.values()) if (l > maxLayer) maxLayer = l
+  for (const n of nodes) {
+    if (!layer.has(n.id)) {
+      maxLayer++
+      layer.set(n.id, maxLayer)
+    }
+  }
+  // 按层分组，同层内按节点顺序排 y
+  const byLayer = new Map<number, AIStoryNode[]>()
+  for (const n of nodes) {
+    const l = layer.get(n.id) ?? 0
+    if (!byLayer.has(l)) byLayer.set(l, [])
+    byLayer.get(l)!.push(n)
+  }
+  const colWidth = 260
+  const rowHeight = 170
+  for (const [l, layerNodes] of byLayer) {
+    layerNodes.forEach((n, i) => {
+      pos.set(n.id, {
+        x: 80 + l * colWidth,
+        y: 80 + i * rowHeight,
+      })
     })
-  })
+  }
   return pos
 }
 
@@ -311,6 +392,7 @@ export function convertToAdventure(story: AIStory): Adventure {
         title: sn.puzzleTitle || undefined,
         digits: sn.puzzleDigits,
         symbols: sn.puzzleSymbols,
+        patterns: sn.puzzlePatterns,
       }
     }
     // 可交互物品
@@ -344,7 +426,7 @@ export function convertToAdventure(story: AIStory): Adventure {
   }
 
   // 布局
-  const positions = layoutPositions(story.nodes, story.startNodeId)
+  const positions = layoutPositions(story.nodes, story.startNodeId, story.choices)
   for (const sn of story.nodes) {
     const node = sceneNodes.find((n) => n.id === idMap.get(sn.id))
     if (node) node.position = positions.get(sn.id) ?? { x: 0, y: 0 }
@@ -459,6 +541,7 @@ function adventureToAIStory(adv: Adventure): AIStory {
       node.puzzleTitle = n.puzzle.title
       node.puzzleDigits = n.puzzle.digits
       node.puzzleSymbols = n.puzzle.symbols
+      node.puzzlePatterns = n.puzzle.patterns
     }
     if (n.interactables && n.interactables.length > 0) {
       node.interactables = n.interactables.map((it) => ({

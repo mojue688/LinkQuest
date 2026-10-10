@@ -41,18 +41,30 @@ export function exportJSON(adventure: Adventure): ExportResult {
   }
 }
 
-/** 导出为单文件 HTML（嵌入 JSON，可离线查看） */
+/** HTML 实体转义，防止 XSS */
+function escapeHTML(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/** 导出为单文件 HTML（嵌入 JSON 数据预览，非可独立运行的游戏） */
 export function exportHTML(adventure: Adventure): ExportResult {
   const json = JSON.stringify(adventure)
+  const title = escapeHTML(adventure.meta.title)
+  const desc = escapeHTML(adventure.meta.description || '')
   const html = `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
-<title>${adventure.meta.title} - 谜境 LinkQuest</title>
+<title>${title} - 谜境 LinkQuest</title>
 <style>body{font-family:system-ui;background:#0f1115;color:#e5e7eb;padding:40px;text-align:center}
 h1{color:#a78bfa}pre{text-align:left;max-width:720px;margin:24px auto;background:#1a1d24;padding:20px;border-radius:12px;overflow:auto}</style>
-</head><body><h1>${adventure.meta.title}</h1>
-<p>${adventure.meta.description || ''}</p>
-<p>该文件为谜境 LinkQuest 导出作品，包含完整剧情数据。</p>
-<pre>${json.replace(/</g, '&lt;')}</pre>
+</head><body><h1>${title}</h1>
+<p>${desc}</p>
+<p>该文件为谜境 LinkQuest 导出的剧情数据预览（JSON），非可独立运行的游戏文件。请在 LinkQuest 中导入后试玩。</p>
+<pre>${escapeHTML(json)}</pre>
 </body></html>`
   const blob = new Blob([html], { type: 'text/html' })
   return {

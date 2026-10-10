@@ -29,6 +29,7 @@ const source = ref<'ai' | 'template'>('template')
 const reviewResult = ref<PlotReviewResult | null>(null)
 const showReview = ref(false)
 const abortRef = ref<AbortController | null>(null)
+const requestSeq = ref(0)
 
 const aiReady = computed(() => settings.enabled && settings.isConfigured)
 
@@ -64,6 +65,7 @@ async function generate() {
   }
   if (loading.value) return
 
+  const seq = ++requestSeq.value
   loading.value = true
   error.value = ''
   result.value = null
@@ -84,7 +86,10 @@ async function generate() {
     const res = await generateStory(client, {
       prompt: p,
       endingCount: endingCount.value,
+      signal: abortRef.value.signal,
     })
+    // 竞态防护：如果已有新请求发出，丢弃旧结果
+    if (seq !== requestSeq.value) return
     // 再次校验（generateStory 内部已校验，这里确保安全）
     const story = normalizeAIStory(res.story, endingCount.value)
     result.value = story
@@ -95,14 +100,21 @@ async function generate() {
       ui.info('使用本地模板生成（未配置 AI 或 AI 不可用）')
     }
   } catch (e) {
+    if (seq !== requestSeq.value) return
+    if (e instanceof AIError && e.kind === 'timeout' && abortRef.value?.signal.aborted) {
+      // 用户主动取消，不显示错误
+      return
+    }
     if (e instanceof AIError) {
       error.value = formatAIError(e)
     } else {
       error.value = (e as Error).message || '生成失败'
     }
   } finally {
-    loading.value = false
-    abortRef.value = null
+    if (seq === requestSeq.value) {
+      loading.value = false
+      abortRef.value = null
+    }
   }
 }
 

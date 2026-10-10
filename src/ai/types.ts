@@ -33,6 +33,7 @@ export interface ChatCompletionRequest {
   max_tokens?: number
   response_format?: { type: 'json_object' | 'text' }
   stream?: false
+  signal?: AbortSignal
 }
 
 export interface ChatCompletionResponse {
@@ -111,6 +112,7 @@ export interface AIStoryNode {
   puzzleTitle?: string
   puzzleDigits?: number
   puzzleSymbols?: string[]
+  puzzlePatterns?: string[]
   /** 可交互物品 */
   interactables?: AIInteractable[]
   endingKind?: 'good' | 'neutral' | 'bad' | 'secret'
@@ -141,6 +143,8 @@ export interface GenerateStoryRequest {
   prompt: string
   /** 期望的结局数量 */
   endingCount?: number
+  /** 取消信号 */
+  signal?: AbortSignal
 }
 
 export interface GenerateStoryResult {
