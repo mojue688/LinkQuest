@@ -177,7 +177,7 @@ const steps = [
               <AppIcon name="feather" :size="18" />
               <span>开始创作</span>
             </button>
-            <button class="lq-btn lq-btn--ghost lq-btn--lg" @click="playTemplate('midnight')">
+            <button class="lq-btn lq-btn--ghost lq-btn--lg" @click="playTemplate('tomb')">
               <AppIcon name="play" :size="18" />
               <span>试玩示范故事</span>
             </button>
