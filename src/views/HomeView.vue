@@ -51,7 +51,11 @@ async function playTemplate(tplId: string) {
   const adv = generateFromTemplate(tplId)
   if (!adv) return
   store.setCurrent(adv)
-  await store.saveCurrent()
+  const ok = await store.saveCurrent()
+  if (!ok) {
+    ui.error('保存失败，无法进入试玩')
+    return
+  }
   router.push({ name: 'play', params: { id: adv.meta.id } })
 }
 
@@ -59,8 +63,12 @@ function useTemplate(tplId: string) {
   const adv = generateFromTemplate(tplId)
   if (!adv) return
   store.setCurrent(adv)
-  store.saveCurrent().then(() => {
-    router.push({ name: 'editor', params: { id: adv.meta.id } })
+  store.saveCurrent().then((ok) => {
+    if (ok) {
+      router.push({ name: 'editor', params: { id: adv.meta.id } })
+    } else {
+      ui.error('保存失败，无法打开编辑器')
+    }
   })
 }
 
@@ -100,7 +108,11 @@ async function duplicateAdventure(adv: Adventure) {
   clone.meta.createdAt = Date.now()
   clone.meta.updatedAt = Date.now()
   store.setCurrent(clone)
-  await store.saveCurrent()
+  const ok = await store.saveCurrent()
+  if (!ok) {
+    ui.error('复制失败，保存出错')
+    return
+  }
   await store.loadList()
   ui.success('已复制作品')
 }

@@ -7,7 +7,12 @@ import AppIcon from '@/components/common/AppIcon.vue'
 const play = usePlayStore()
 const node = computed(() => play.currentNode)
 const patterns = computed(() => node.value?.puzzle?.patterns ?? [])
-const answerLen = computed(() => node.value?.puzzle?.answer.length ?? 3)
+const rawAnswer = computed(() => node.value?.puzzle?.answer ?? '')
+const isSequence = computed(() => rawAnswer.value.includes(','))
+const answerLen = computed(() => {
+  if (isSequence.value) return rawAnswer.value.split(',').length
+  return 1
+})
 
 const selected = ref<string[]>([])
 
@@ -25,7 +30,7 @@ function clear() {
   selected.value = []
 }
 function submit() {
-  play.solvePuzzle(selected.value.join(''))
+  play.solvePuzzle(selected.value.join(','))
 }
 
 const pstate = computed(() => {

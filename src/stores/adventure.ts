@@ -162,9 +162,14 @@ export const useAdventureStore = defineStore('adventure', {
       if (!this.current) return false
       this.saving = true
       this.error = ''
+      const snapshot = deepClone(this.current)
+      const snapshotKey = JSON.stringify(snapshot)
       try {
-        await putAdventure(deepClone(this.current))
-        this.dirty = false
+        await putAdventure(snapshot)
+        // 仅当保存期间没有新编辑时才清除 dirty
+        if (JSON.stringify(this.current) === snapshotKey) {
+          this.dirty = false
+        }
         this.lastSavedAt = Date.now()
         return true
       } catch (e) {

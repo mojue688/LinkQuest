@@ -11,7 +11,7 @@ import type {
   SceneNode,
   Choice,
 } from '@/types/adventure'
-import { NodeType } from '@/types/adventure'
+import { NodeType, InteractAction } from '@/types/adventure'
 
 /** 触发浏览器下载 */
 export function downloadBlob(blob: Blob, filename: string): void {
@@ -105,28 +105,78 @@ export function validateImported(data: unknown): Adventure {
   if (typeof data.startNodeId !== 'string' || !data.startNodeId)
     fail('startNodeId 不合法。')
 
+  // 确保可选数组字段存在
+  if (!Array.isArray(data.variables)) (data as Record<string, unknown>).variables = []
+  if (!Array.isArray(data.items)) (data as Record<string, unknown>).items = []
+  if (!Array.isArray(data.characters)) (data as Record<string, unknown>).characters = []
+
   const nodeIds = new Set<string>()
+  const choiceIds = new Set<string>()
+  const itemKeys = new Set<string>()
+
+  // 校验物品
+  for (const it of data.items as unknown[]) {
+    if (!isObj(it)) fail('物品结构不合法。')
+    const item = it as Record<string, unknown>
+    if (typeof item.key !== 'string' || !item.key) fail('物品 key 不合法。')
+    if (itemKeys.has(item.key as string)) fail(`物品 key 重复：${item.key}`)
+    itemKeys.add(item.key as string)
+  }
+
+  // 校验节点
   for (const n of data.nodes as unknown[]) {
     if (!isObj(n)) fail('节点结构不合法。')
     const node = n as Record<string, unknown>
     if (typeof node.id !== 'string' || !node.id) fail('节点 id 不合法。')
+    if (nodeIds.has(node.id as string)) fail(`节点 id 重复：${node.id}`)
+    nodeIds.add(node.id as string)
     if (typeof node.type !== 'string' || !isValidNodeType(node.type))
       fail(`节点 ${node.id} 类型不合法。`)
     if (!isObj(node.content)) fail(`节点 ${node.id} 缺少 content。`)
     if (typeof node.content.title !== 'string' || typeof node.content.text !== 'string')
       fail(`节点 ${node.id} content 字段不完整。`)
-    if (!isObj(node.position) || typeof node.position.x !== 'number')
+    if (!isObj(node.position) || typeof node.position.x !== 'number' || typeof node.position.y !== 'number')
       fail(`节点 ${node.id} 坐标不合法。`)
-    nodeIds.add(node.id as string)
+    // �4a. 谜题配置校验
+    if (node.type === NodeType.Puzzle) {
+      if (!isObj(node.puzzle)) fail(`谜题节点 ${node.id} 缺少 puzzle 配置。`)
+      const p = node.puzzle as Record<string, unknown>
+      if (typeof p.answer !== 'string') fail(`谜题节点 ${node.id} 缺少 answer。`)
+      if (typeof p.prompt !== 'string') fail(`谜题节点 ${node.id} 缺少 prompt。`)
+    }
+    // 4b. 线索引用校验
+    if (node.type === NodeType.Clue) {
+      if (typeof node.clueItemKey !== 'string' || !node.clueItemKey)
+        fail(`线索节点 ${node.id} 缺少 clueItemKey。`)
+    }
+    // 4c. 交互物品目标校验
+    if (Array.isArray(node.interactables)) {
+      for (const ri of node.interactables) {
+        if (!isObj(ri)) fail(`节点 ${node.id} 交互物品结构不合法。`)
+        const it = ri as Record<string, unknown>
+        if (typeof it.action !== 'string') fail(`节点 ${node.id} 交互物品缺少 action。`)
+        const action = it.action as string
+        const target = it.target as string | undefined
+        if ((action === InteractAction.GoToNode || action === InteractAction.OpenPuzzle) && target) {
+          if (!nodeIds.has(target)) fail(`节点 ${node.id} 交互物品跳转目标 ${target} 不存在。`)
+        }
+        if ((action === InteractAction.CollectClue || action === InteractAction.GiveItem) && target) {
+          if (!itemKeys.has(target)) fail(`节点 ${node.id} 交互物品引用物品 ${target} 未定义。`)
+        }
+      }
+    }
   }
 
   if (!nodeIds.has(data.startNodeId as string))
     fail('起始节点不存在于节点列表中。')
 
+  // 校验选项
   for (const c of data.choices as unknown[]) {
     if (!isObj(c)) fail('选项结构不合法。')
     const choice = c as Record<string, unknown>
     if (typeof choice.id !== 'string') fail('选项 id 不合法。')
+    if (choiceIds.has(choice.id as string)) fail(`选项 id 重复：${choice.id}`)
+    choiceIds.add(choice.id as string)
     if (typeof choice.fromNodeId !== 'string' || typeof choice.toNodeId !== 'string')
       fail(`选项 ${choice.id} 连接节点不合法。`)
     if (!nodeIds.has(choice.fromNodeId as string))
@@ -134,6 +184,7 @@ export function validateImported(data: unknown): Adventure {
     if (!nodeIds.has(choice.toNodeId as string))
       fail(`选项 ${choice.id} 目标节点不存在。`)
     if (typeof choice.label !== 'string') fail(`选项 ${choice.id} label 不合法。`)
+    if (!Array.isArray(choice.effects)) (choice as Record<string, unknown>).effects = []
   }
 
   return data as unknown as Adventure

@@ -7,6 +7,7 @@ import {
   solvePuzzle as runtimeSolvePuzzle,
   interactItem as runtimeInteractItem,
   getVisibleInteractables as runtimeGetVisibleInteractables,
+  getAvailableChoices as runtimeGetAvailableChoices,
   getPuzzleState as runtimeGetPuzzleState,
   isInteracted as runtimeIsInteracted,
 } from '@/engine/runtime'
@@ -39,7 +40,8 @@ export const usePlayStore = defineStore('play', {
       const adv = state.adventure
       const st = state.state
       if (!adv || !st) return []
-      return adv.choices.filter((c) => c.fromNodeId === st.currentNodeId)
+      const ctx: RuntimeContext = { adventure: adv, state: st }
+      return runtimeGetAvailableChoices(ctx)
     },
     inventory(state): string[] {
       return state.state?.inventory ?? []

@@ -180,7 +180,11 @@ function saveMeta() {
 
 async function applyAI(adv: Adventure) {
   store.setCurrent(adv)
-  await store.saveCurrent()
+  const ok = await store.saveCurrent()
+  if (!ok) {
+    ui.error('AI 故事保存失败')
+    return
+  }
   await store.loadList()
   showAI.value = false
   syncMetaForm()
@@ -255,7 +259,11 @@ function handleImport() {
       })
       if (!ok) return
       store.setCurrent(adv)
-      await store.saveCurrent()
+      const saved = await store.saveCurrent()
+      if (!saved) {
+        ui.error('导入后保存失败')
+        return
+      }
       await store.loadList()
       ui.success('导入成功')
     } catch (e) {

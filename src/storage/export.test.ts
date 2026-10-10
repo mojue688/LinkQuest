@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { exportHTML, exportJSON, validateImported } from './export'
+import { exportHTML, exportJSON, validateImported, importAdventure } from './export'
 import { createAdventure } from '@/utils/factory'
-import { type Adventure } from '@/types/adventure'
+import { InteractAction, type Adventure } from '@/types/adventure'
 
 function makeAdventure(title: string, description = ''): Adventure {
   const adv = createAdventure(title)
@@ -90,5 +90,66 @@ describe('validateImported', () => {
       effects: [],
     })
     expect(() => validateImported(JSON.parse(JSON.stringify(adv)))).toThrow('目标节点不存在')
+  })
+
+  it('应拒绝重复节点 ID', () => {
+    const adv = makeAdventure('测试')
+    const dupNode = JSON.parse(JSON.stringify(adv.nodes[0]))
+    dupNode.id = adv.nodes[0].id
+    adv.nodes.push(dupNode)
+    expect(() => validateImported(JSON.parse(JSON.stringify(adv)))).toThrow('重复')
+  })
+
+  it('应拒绝重复选项 ID', () => {
+    const adv = makeAdventure('测试')
+    const dupChoice = JSON.parse(JSON.stringify(adv.choices[0]))
+    dupChoice.id = adv.choices[0].id
+    adv.choices.push(dupChoice)
+    expect(() => validateImported(JSON.parse(JSON.stringify(adv)))).toThrow('重复')
+  })
+
+  it('应拒绝谜题节点缺少 answer', () => {
+    const adv = makeAdventure('测试')
+    const puzzle = adv.nodes[0]
+    puzzle.type = 'puzzle' as any
+    puzzle.puzzle = { prompt: '输入', hint: '错', maxAttempts: 0 } as any
+    expect(() => validateImported(JSON.parse(JSON.stringify(adv)))).toThrow('answer')
+  })
+
+  it('应拒绝交互物品跳转目标不存在', () => {
+    const adv = makeAdventure('测试')
+    adv.nodes[0].interactables = [
+      {
+        id: 'it1',
+        name: '门',
+        action: InteractAction.GoToNode,
+        target: 'nonexistent',
+        position: { x: 50, y: 50 },
+      },
+    ]
+    expect(() => validateImported(JSON.parse(JSON.stringify(adv)))).toThrow('不存在')
+  })
+
+  it('应补全缺失的可选数组字段', () => {
+    const adv = makeAdventure('测试')
+    const raw = JSON.parse(JSON.stringify(adv))
+    delete raw.variables
+    delete raw.items
+    delete raw.characters
+    const result = validateImported(raw)
+    expect(result.variables).toEqual([])
+    expect(result.items).toEqual([])
+    expect(result.characters).toEqual([])
+  })
+
+  it('应拒绝坐标缺少 y 值', () => {
+    const adv = makeAdventure('测试')
+    const raw = JSON.parse(JSON.stringify(adv))
+    delete raw.nodes[0].position.y
+    expect(() => validateImported(raw)).toThrow('坐标')
+  })
+
+  it('应拒绝非法 JSON', () => {
+    expect(() => importAdventure('{invalid json}')).toThrow('JSON')
   })
 })

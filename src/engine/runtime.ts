@@ -145,6 +145,8 @@ export function choose(ctx: RuntimeContext, choiceId: ID): StepResult {
   if (!choice) throw new Error(`选项 ${choiceId} 不存在`)
   if (choice.fromNodeId !== ctx.state.currentNodeId)
     throw new Error('该选项不属于当前节点')
+  if (!evalOptionalCondition(ctx.state, choice.condition))
+    throw new Error('当前条件不满足，无法选择该选项。')
 
   applyEffects(ctx.state, choice.effects)
   ctx.state.history.push({

@@ -24,11 +24,16 @@ export async function saveCurrentState(
   existingId?: ID
 ): Promise<ID> {
   const now = Date.now()
+  let startedAt = now
+  if (existingId) {
+    const existing = await getSession(existingId)
+    if (existing) startedAt = existing.startedAt
+  }
   const session: PlaySession = {
     id: existingId ?? genId('session'),
     adventureId,
     state,
-    startedAt: now,
+    startedAt,
     updatedAt: now,
   }
   await putSession(session)

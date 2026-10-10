@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useUI } from '@/stores/ui'
 import { createProvider } from '@/ai/provider'
@@ -38,6 +38,14 @@ onMounted(() => {
     // 自动触发生成
     generate()
   }
+})
+
+onBeforeUnmount(() => {
+  if (abortRef.value) {
+    abortRef.value.abort()
+    abortRef.value = null
+  }
+  requestSeq.value++
 })
 
 watch(

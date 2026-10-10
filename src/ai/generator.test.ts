@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { normalizeAIStory, convertToAdventure } from './generator'
-import { NodeType, PuzzleKind } from '@/types/adventure'
+import { NodeType, PuzzleKind, InteractAction } from '@/types/adventure'
 import type { AIStory } from './types'
 
 describe('normalizeAIStory', () => {
@@ -186,5 +186,183 @@ describe('convertToAdventure', () => {
     const ending = adv.nodes.find((n) => n.type === NodeType.Ending)
     expect(start!.position.x).toBeLessThan(scene!.position.x)
     expect(scene!.position.x).toBeLessThan(ending!.position.x)
+  })
+})
+
+describe('normalizeAIStory ID 碰撞防护', () => {
+  it('AI 返回 n_start 节点时补充起始节点不应碰撞', () => {
+    const raw = {
+      title: '测试',
+      startNodeId: 'n_start',
+      nodes: [
+        { id: 'n_start', type: 'start', title: '开始', text: '开始' },
+        { id: 'n2', type: 'scene', title: '场景', text: '场景' },
+        { id: 'n_end_1', type: 'ending', title: '结局', text: '结局', endingKind: 'good' },
+      ],
+      choices: [
+        { from: 'n_start', to: 'n2', label: '去' },
+        { from: 'n2', to: 'n_end_1', label: '结束' },
+      ],
+    }
+    const story = normalizeAIStory(raw, 1)
+    const ids = story.nodes.map((n) => n.id)
+    const uniqueIds = new Set(ids)
+    expect(ids.length).toBe(uniqueIds.size)
+  })
+
+  it('AI 返回 n_end_1 节点时补充结局不应碰撞', () => {
+    const raw = {
+      title: '测试',
+      startNodeId: 'n1',
+      nodes: [
+        { id: 'n1', type: 'start', title: '开始', text: '开始' },
+        { id: 'n2', type: 'scene', title: '场景', text: '场景' },
+        { id: 'n_end_1', type: 'scene', title: '已有节点', text: '已有' },
+      ],
+      choices: [
+        { from: 'n1', to: 'n2', label: '去' },
+        { from: 'n2', to: 'n_end_1', label: '去' },
+      ],
+    }
+    const story = normalizeAIStory(raw, 2)
+    const ids = story.nodes.map((n) => n.id)
+    const uniqueIds = new Set(ids)
+    expect(ids.length).toBe(uniqueIds.size)
+    const endings = story.nodes.filter((n) => n.type === 'ending')
+    expect(endings.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('所有节点 ID 应唯一', () => {
+    const raw = {
+      title: '测试',
+      startNodeId: 'n1',
+      nodes: [
+        { id: 'n1', type: 'start', title: '开始', text: '开始' },
+        { id: 'n1', type: 'scene', title: '重复ID', text: '重复' },
+        { id: 'n2', type: 'scene', title: '场景', text: '场景' },
+      ],
+      choices: [{ from: 'n1', to: 'n2', label: '去' }],
+    }
+    const story = normalizeAIStory(raw, 1)
+    const ids = story.nodes.map((n) => n.id)
+    const uniqueIds = new Set(ids)
+    expect(ids.length).toBe(uniqueIds.size)
+  })
+})
+
+describe('convertToAdventure 交互目标映射', () => {
+  it('goto 动作的 target 应转换为真实节点 ID', () => {
+    const story: AIStory = {
+      title: '测试',
+      description: '描述',
+      startNodeId: 'n1',
+      nodes: [
+        {
+          id: 'n1',
+          type: 'start',
+          title: '开始',
+          text: '开始',
+          interactables: [
+            {
+              id: 'door1',
+              name: '门',
+              action: 'goto',
+              target: 'n3',
+              position: { x: 50, y: 50 },
+            },
+          ],
+        },
+        { id: 'n2', type: 'scene', title: '场景', text: '场景' },
+        { id: 'n3', type: 'ending', title: '结局', text: '结局', endingKind: 'good' },
+      ],
+      choices: [
+        { from: 'n1', to: 'n2', label: '去' },
+        { from: 'n2', to: 'n3', label: '结束' },
+      ],
+    }
+    const adv = convertToAdventure(story)
+    const startNode = adv.nodes.find((n) => n.type === NodeType.Start)
+    const endingNode = adv.nodes.find((n) => n.type === NodeType.Ending)
+    const interactable = startNode?.interactables?.[0]
+    expect(interactable?.action).toBe(InteractAction.GoToNode)
+    expect(interactable?.target).toBe(endingNode?.id)
+    expect(interactable?.target).not.toBe('n3')
+  })
+
+  it('puzzle 动作的 target 应转换为真实节点 ID', () => {
+    const story: AIStory = {
+      title: '测试',
+      description: '描述',
+      startNodeId: 'n1',
+      nodes: [
+        {
+          id: 'n1',
+          type: 'start',
+          title: '开始',
+          text: '开始',
+          interactables: [
+            {
+              id: 'lock1',
+              name: '锁',
+              action: 'puzzle',
+              target: 'n2',
+              position: { x: 50, y: 50 },
+            },
+          ],
+        },
+        {
+          id: 'n2',
+          type: 'puzzle',
+          title: '谜题',
+          text: '输入密码',
+          puzzleAnswer: '1234',
+        },
+        { id: 'n3', type: 'ending', title: '结局', text: '结局', endingKind: 'good' },
+      ],
+      choices: [
+        { from: 'n1', to: 'n2', label: '去' },
+        { from: 'n2', to: 'n3', label: '完成' },
+      ],
+    }
+    const adv = convertToAdventure(story)
+    const startNode = adv.nodes.find((n) => n.type === NodeType.Start)
+    const puzzleNode = adv.nodes.find((n) => n.type === NodeType.Puzzle)
+    const interactable = startNode?.interactables?.[0]
+    expect(interactable?.action).toBe(InteractAction.OpenPuzzle)
+    expect(interactable?.target).toBe(puzzleNode?.id)
+    expect(interactable?.target).not.toBe('n2')
+  })
+
+  it('collect 动作的 target 应保持为物品 key', () => {
+    const story: AIStory = {
+      title: '测试',
+      description: '描述',
+      startNodeId: 'n1',
+      nodes: [
+        {
+          id: 'n1',
+          type: 'start',
+          title: '开始',
+          text: '开始',
+          interactables: [
+            {
+              id: 'drawer1',
+              name: '抽屉',
+              action: 'collect',
+              target: 'rusty_key',
+              position: { x: 30, y: 70 },
+            },
+          ],
+        },
+        { id: 'n2', type: 'ending', title: '结局', text: '结局', endingKind: 'good' },
+      ],
+      choices: [{ from: 'n1', to: 'n2', label: '去' }],
+      items: [{ key: 'rusty_key', name: '生锈的钥匙' }],
+    }
+    const adv = convertToAdventure(story)
+    const startNode = adv.nodes.find((n) => n.type === NodeType.Start)
+    const interactable = startNode?.interactables?.[0]
+    expect(interactable?.action).toBe(InteractAction.CollectClue)
+    expect(interactable?.target).toBe('rusty_key')
   })
 })

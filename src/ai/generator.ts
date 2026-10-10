@@ -138,8 +138,10 @@ export function normalizeAIStory(raw: unknown, requestedEndings = 3): AIStory {
   // 确保有 start 节点
   let startNode = nodes.find((n) => n.type === 'start')
   if (!startNode) {
+    let startId = 'n_start'
+    while (nodeMap.has(startId)) startId = `${startId}_${genId('s')}`
     startNode = {
-      id: 'n_start',
+      id: startId,
       type: 'start',
       title: '故事开端',
       text: '你的冒险从这里开始……',
@@ -230,9 +232,11 @@ export function normalizeAIStory(raw: unknown, requestedEndings = 3): AIStory {
 
   function addEnding(): AIStoryNode {
     endCounter++
+    let endId = `n_end_${endCounter}`
+    while (nodeMap.has(endId)) endId = `n_end_${endCounter}_${genId('e')}`
     const kind = endingKinds[(endings.length + endCounter - 1) % endingKinds.length]
     const endNode: AIStoryNode = {
-      id: `n_end_${endCounter}`,
+      id: endId,
       type: 'ending',
       title: '结局',
       text: '故事到此结束。',
@@ -423,6 +427,22 @@ export function convertToAdventure(story: AIStory): Adventure {
     }
     idMap.set(sn.id, node.id)
     sceneNodes.push(node)
+  }
+
+  // 转换交互物品目标：goto/puzzle 的 target 是 AI 故事节点 ID，需映射为真实节点 ID
+  for (const sn of story.nodes) {
+    if (!sn.interactables) continue
+    const node = sceneNodes.find((n) => n.id === idMap.get(sn.id))
+    if (!node?.interactables) continue
+    for (const it of node.interactables) {
+      if (
+        (it.action === InteractAction.GoToNode || it.action === InteractAction.OpenPuzzle) &&
+        it.target
+      ) {
+        const mapped = idMap.get(it.target)
+        if (mapped) it.target = mapped
+      }
+    }
   }
 
   // 布局
